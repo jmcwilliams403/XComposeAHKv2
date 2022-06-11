@@ -1,0 +1,670 @@
+﻿#Requires AutoHotkey v2.0-b
+#SingleInstance force
+SetWinDelay 0
+SetKeyDelay -1
+SetWorkingDir A_ScriptDir
+SequenceDir := A_AppData . "\XCompose"
+SequenceFile := SequenceDir . "\XCompose"
+KeysymFile := SequenceDir . "\XKeySymDef"
+SequenceRepo := "https://raw.githubusercontent.com/freedesktop/xorg-libX11/master/nls/en_US.UTF-8/Compose.pre"
+KeysymRepo := "https://raw.githubusercontent.com/freedesktop/xorg-xorgproto/master/include/X11/keysymdef.h"
+UserDir := EnvGet("USERPROFILE")
+UserSequenceFile := UserDir . "\.XCompose"
+ResourceFileSource := "res.dll"
+ResourceFile := SequenceDir . "\" . ResourceFileSource
+Persistent
+ProcessSetPriority "High"
+
+global r_right := "^.*?:\s*(`"(\\.|[^\\`"])*`"|(\w+)).*$"
+global r_left := "^\s*((<{1,2}.*?>{1,2}\s*)*):.*$"
+global r_unicode := "iAD)U0{0,2}((?:10|0?[[:xdigit:]])?[[:xdigit:]]{1,4})$"
+
+global r_space := "[\p{Xps}]"
+global r_sentinel := "[\x{FDD0}-\x{FDEF}]"
+
+global sequences := Map(), sequences_alt := Map()
+global HasGenericPrefix := Map(), HasPrefix := Map(), HasGenericSequence := Map()
+
+global Composing := {state: 0}
+HasGenericPrefix.Default := 0, HasPrefix.Default := 0, HasGenericSequence.Default := 0
+sequences_alt.CaseSense := "Off", HasGenericPrefix.CaseSense := "Off", HasGenericSequence.CaseSense := "Off"
+
+global keysyms := Map(	"NoSymbol",		""
+					,	"VoidSymbol",	""
+					,	"Blank",		Chr(0x80)
+					,	"BackSpace",	Chr(0x08)
+					,	"Tab",			Chr(0x09)
+					,	"Linefeed",		Chr(0x0a)
+					,	"Return",		Chr(0x0d)
+					,	"Escape",		Chr(0x1b)
+					,	"Delete",		Chr(0x7f)
+					,	"Insert",		Chr(0xFDD0)
+					,	"End",			Chr(0xFDD1)
+					,	"Down",			Chr(0xFDD2)
+					,	"Next",			Chr(0xFDD3)
+					,	"Page_Down",	Chr(0xFDD3)
+					,	"Left",			Chr(0xFDD4)
+					,	"Clear",		Chr(0xFDD5)
+					,	"Begin",		Chr(0xFDD5)
+					,	"Right",		Chr(0xFDD6)
+					,	"Home",			Chr(0xFDD7)
+					,	"Up",			Chr(0xFDD8)
+					,	"Prior",		Chr(0xFDD9)
+					,	"Page_Up",		Chr(0xFDD9))
+
+
+
+
+try DirCreate SequenceDir
+try FileInstall ResourceFileSource, ResourceFile
+try TraySetIcon(ResourceFile,1,true)
+
+UpdateAll()
+LoadAll()
+
+*AppsKey::Return
+*AppsKey up::
+{
+	Hook := InputHook("","{Escape}{Enter}{NumpadEnter}{Tab}{F1}{F2}{F3}{F4}{F5}{F6}{F7}{F8}{F9}{F10}{F11}{F12}{PrintScreen}{Pause}")
+	Hook.VisibleNonText := false
+	Hook.NotifyNonText := true
+	Hook.OnChar := SendCharacter
+	Hook.OnEnd := SendUnicodeString
+	Hook.OnKeyDown := SendKeystroke
+	Hook.Start()
+	if(++Composing.state)
+		try TraySetIcon(ResourceFile,2,true)
+	return
+}
+
+Return
+
+SendCharacter(Hook, Char)
+{
+	if(!HasPrefix[Hook.Input] && (!HasGenericPrefix[Hook.Input] || sequences.has(Hook.Input)))
+		Hook.Stop()
+}
+SendKeystroke(Hook, vk, sc)
+{
+	switch(vk)
+	{
+		case 0x0C:
+			SendText keysyms.get("Clear")
+		case 0x21:
+			SendText keysyms.get("Page_Up")
+		case 0x22:
+			SendText keysyms.get("Page_Down")
+		case 0x23:
+			SendText keysyms.get("End")
+		case 0x24:
+			SendText keysyms.get("Home")
+		case 0x25:
+			SendText keysyms.get("Left")
+		case 0x26:
+			SendText keysyms.get("Up")
+		case 0x27:
+			SendText keysyms.get("Right")
+		case 0x28:
+			SendText keysyms.get("Down")
+		case 0x2D:
+			SendText keysyms.get("Insert")
+	}
+}
+SendUnicodeString(Hook)
+{
+	if(!(Composing.state := Max(Composing.state - 1, 0)))
+		try TraySetIcon(ResourceFile,1, true)
+	
+	if (Hook.EndKey ~= "^((Numpad)?Enter|Tab)?$")
+	{
+		str := get_sequence(Hook.Input)
+		
+		if (WinActive("ahk_class gdkWindowToplevel"))
+		{
+			Loop Parse str
+			{
+				if (!IsEmpty(A_LoopField))
+					Send "^+{vk55}" . Format("{:x}",Ord(A_LoopField)) . "{Enter}"
+			}
+		}
+		else
+			SendText str
+	}
+	
+	return
+}
+
+UpdateAll()
+{
+	Update(SequenceFile,SequenceRepo, var => Trim(RegexReplace(RegexReplace(RegexReplace(RegexReplace(StrReplace(var, "XCOMM", "#"), "(^|\R)(?!\s*(<Multi_key>|#))[^\r\n]*"), "(^|\R)(?=[^\r\n]*?<(dead|KP)_)[^\r\n]*"),"[ \t]{2,}","`t"),"\R{2,}","`n"),"`r`n"))
+	Update(KeysymFile,KeysymRepo, var => Trim(RegexReplace(RegexReplace(RegexReplace(var, "\R\#define XK_(\w+)\s+0x[[:xdigit:]]+\s*\/\*[\s\(]?U\+([[:xdigit:]]{4,6})\s?(.*?)[\s\)]?\*\/","`n<$1>`t: U$2`t# $3"), "(^|\R)[^<\r\n][^\r\n]*"),"\R{2,}","`n"),"`r`n"))
+	return
+}
+
+Update(FilePath, Repo, ReplaceFunc := unset)
+{
+	FileEncoding "UTF-8"
+	Critical
+	try
+	{
+		req := ComObject("WinHttp.WinHttpRequest.5.1")
+		req.Open("GET", Repo, true)
+		req.Send()
+		req.WaitForResponse()
+		
+		sequences_new := (IsSet(ReplaceFunc)? ReplaceFunc(req.ResponseText) : req.ResponseText)
+		
+		File := FileOpen(FilePath, "rw `n")
+		sequences_old := File.Read()
+		File.Close()
+
+		if (sequences_new != sequences_old)
+		{
+			FileName := ""
+			SplitPath FilePath,,,, &FileName
+			If (MsgBox("An update for " . FileName . " has been found.`nWould you like to install it now?",,"YesNo") == "Yes")
+			{
+				File := FileOpen(FilePath, "w `n")
+				File.Write(sequences_new)
+				File.Close()
+			}
+		}
+	}
+	return
+}
+
+LoadAll()
+{
+	LoadKeyFile(KeysymFile)
+	if FileExist(userSequenceFile)
+	{
+		File := FileOpen(userSequenceFile, "r `n")
+		IncludeXOrg := (File.ReadLine() ~= "^\s*include\s+`"%L`"\s*(\s\#.*)?$")
+		File.Close
+		if (IncludeXOrg)
+			LoadSequenceFile(SequenceFile)
+		
+		LoadSequenceFile(userSequenceFile)
+	}
+	else
+	{
+		File := FileOpen(userSequenceFile, "w `n")
+		File.WriteLine("include `"%L`"")
+		File.WriteLine("<Multi_key> <h> <w> : `"Hello, world!`"`t# HELLO WORLD")
+		File.Close
+		LoadSequenceFile(SequenceFile)
+		LoadSequenceFile(userSequenceFile)
+	}
+	return
+}
+LoadKeyFile(file)
+{
+	FileEncoding "UTF-8"
+
+	loop read, file
+	{
+		try
+		{
+			ret := ""
+			
+			right := regexreplace(a_loopreadline, r_right, "$1", &ret)
+			if (!ret)
+				continue
+			
+			right := Unescape(right)
+			
+			left := regexreplace(a_loopreadline, r_left, "$1", &ret)
+			if (!ret)
+				continue
+			left := regexreplace(left, "\s*", "")
+
+			keysyms[regexreplace(left, "[<>]*", "")] := right
+		}
+		catch
+		{
+			continue
+		}
+	}
+	return
+}
+
+LoadSequenceFile(file)
+{
+	FileEncoding "UTF-8"
+
+	loop read, file
+	{
+		try
+		{
+			ret := ""
+			
+			right := regexreplace(a_loopreadline, r_right, "$1", &ret)
+			if (!ret)
+				continue
+			
+			right := Unescape(right, &ret)
+			if (ret)
+				continue
+			
+			left := regexreplace(a_loopreadline, r_left, "$1", &ret)
+			if (!ret)
+				continue
+			
+			left := regexreplace(left, "^<Multi_key>", "", &ret)
+			if (!ret)
+				continue
+			
+			valid := true
+			seq := ""
+			
+			arr := RegexSplit(left,"(^|>)" . r_space . "*(<|$)")
+			
+			for str in arr
+			{
+				if (IsEmpty(str))
+					continue
+				errorlevel := ""
+				char := GetUnicode(str, &errorlevel)
+				if (keysyms.has(char))
+					seq .= keysyms[char]
+				else if (IsChar(char) && !errorlevel)
+					seq .= char
+				else
+				{
+					valid := false
+					break
+				}
+			}
+			
+			if (valid)
+			{
+				if (!IsEmpty(right))
+				{
+					add_sequence(seq, right)
+					
+					if (StrLen32(seq) == 2)
+					{
+						str := StrReverse(seq)
+						if (!sequences.has(str))
+							add_sequence(str, right)
+					}
+				}
+				else if (sequences.has(seq))
+				{
+					del_sequence(seq)
+				}
+			}
+		}
+		catch
+		{
+			continue
+		}
+	}
+	return
+}
+
+add_sequence(seq, char)
+{	
+	if (!sequences.has(seq))
+	{
+		loop strlen(seq) - 1
+		{
+			prefix := substr(seq, 1, a_index)
+			HasGenericPrefix[prefix] := (HasGenericPrefix[prefix] + 1), HasPrefix[prefix] := (HasPrefix[prefix] + 1)
+		}
+		HasGenericSequence[seq] := (HasGenericSequence[seq] + 1)
+	}
+	sequences[seq] := char
+	sequences_alt[seq] := char
+	return
+}
+
+del_sequence(seq)
+{
+	if (sequences.has(seq))
+	{
+		loop strlen(seq) - 1
+		{
+			prefix := substr(seq, 1, a_index)
+			if(!(HasGenericPrefix[prefix] := Max((HasGenericPrefix[prefix] - 1),0)))
+				HasGenericPrefix.Delete(prefix)
+			if(!(HasPrefix[prefix] := Max((HasPrefix[prefix] - 1),0)))
+				HasPrefix.Delete(prefix)
+		}
+		
+		sequences.Delete(seq)
+		if (!(HasGenericSequence[seq] := Max((HasGenericSequence[seq] - 1),0)))
+		{
+			sequences_alt.Delete(seq)
+			HasGenericSequence.Delete(seq)
+		}
+	}
+	return
+}
+
+get_sequence(seq)
+{
+	if (IsEmpty(seq))
+		return ""
+	
+	str := substr32(seq,1,-1), char := SanitizeOutput(RegexReplace(substr32(seq,-1),r_space))
+	
+	if(sequences.has(seq))
+		ret := sequences[seq]
+	else if (sequences.has(str))
+		ret := sequences[str] . char
+	else if (sequences_alt.has(seq))
+		ret := sequences_alt[seq]
+	else if (sequences_alt.has(str))
+		ret := sequences_alt[str] . char
+	else
+		return SanitizeOutput(RegexReplace(str . char, "^(\p{M}+)((\P{M}))","$2$1"))
+	if (GetCapsLockState() && !(seq ~= "[\p{Ll}]"))
+		ret := StrUpper(ret)
+	return ret
+}
+
+GetCapsLockState(Mode := "T")
+{
+	return GetKeyState("CapsLock", Mode)
+}
+
+GetUnicode(str, &errorlevel := unset)
+{
+	if (str ~= r_space)
+	{
+		errorlevel := 0
+		return str
+	}
+	ret := ""
+	uni := regexreplace(str, r_unicode, "$1", &ret)
+	return ZapNonchar(((ret && !IsEmpty(uni))? Chr(Number("0x" . uni)) : str), &errorlevel)
+}
+
+Unescape(str, &errorlevel := unset)
+{
+	if (IsEmpty(str))
+	{
+		errorlevel := 0
+		return ""
+	}
+	r_escapePrefix := "(?<!\\)(?:\\{2})*\K"
+	ret := ""
+	str := ZapNonchar(RegexReplace(str, r_escapePrefix . "`"", "", &ret), &errorlevel)
+	
+	if (errorlevel)
+		return str
+	
+	if (!ret)
+		return keysyms.get(str, GetUnicode(str, &errorlevel))
+	
+	str := RegExReplace(str, r_escapePrefix . "\\a", "`a")
+	str := RegExReplace(str, r_escapePrefix . "\\b", "`b")
+	str := RegExReplace(str, r_escapePrefix . "\\t", "`t")
+	str := RegExReplace(str, r_escapePrefix . "\\n", "`n")
+	str := RegExReplace(str, r_escapePrefix . "\\v", "`v")
+	str := RegExReplace(str, r_escapePrefix . "\\f", "`f")
+	str := RegExReplace(str, r_escapePrefix . "\\r", "`r")
+	str := RegExReplace(str, r_escapePrefix . "\\e", Chr(0x1b))
+	
+	str := ZapNonchar(regexreplaceF(str, r_escapePrefix . "\\0x[[:xdigit:]]{4}", var => Chr(Number(LTrim(var, "\")))),&errorlevel)
+	
+	if (errorlevel)
+		return str
+	
+	str := ZapNonchar(regexreplaceF(str, r_escapePrefix . "\\[0-7]{3}", var => Chr(OctToDec(Number(LTrim(var, "\"))))),&errorlevel)
+	
+	if (errorlevel)
+		return str
+	
+	str := RegExReplace(str, r_escapePrefix . "\\0")
+	str := regexreplace(str, "\\(.)", "$1")
+	
+	return str
+}
+
+SanitizeOutput(str)
+{
+	if IsComposing()
+		return str
+	
+	ret := ""
+	
+	str := regexreplace(str, r_sentinel)
+	
+	str := RegexReplace(str,r_space, a_space)
+	
+	str := RegexReplace(str, "[\x00\x1b\x7f\x80]")
+	
+	str := RegexReplace(str,"`a",,&ret)
+	loop ret
+		SoundPlay "*-1"
+	
+	loop
+		str := regexreplace(str,"(^|[^`b]\p{M}*)`b",,&ret)
+	Until !ret
+	
+	return str
+}
+
+ZapNonchar(str, &count := unset)
+{
+	c_replacement := Chr(0xFFFD)
+	arr := StrSplit32(regexreplace(str, r_sentinel,c_replacement,&count))
+	ret := ""
+	for char in arr
+	{
+		if(Ord(char) & 0xFFFE == 0xFFFE)
+		{
+			ret .= c_replacement
+			count++
+		}
+		else
+			ret .= char
+	}
+	return ret
+}
+
+StrSplit32(str, delimiters := "", OmitChars := "", MaxParts := -1)
+{
+	if !IsEmpty(delimiters)
+	{
+		ret := StrSplit(str, delimiters,,MaxParts)
+		if StrLen(OmitChars)
+		{
+			loop ret.Length
+				ret[a_index] := Trim32(ret[a_index], OmitChars)
+		}
+		return ret
+	}
+	ret := array()
+	if (MaxParts)
+	{
+		len := strlen(str), pos := 1
+		while pos <= len
+		{
+			if (ret.Length = (MaxParts - 1))
+			{
+				ret.push(Trim32(substr(str, pos), OmitChars))
+				break
+			}
+			if(!(OmitChars ~= RegExEscape(char := Chr(index := ord(substr(str,pos))))))
+				ret.push(char)
+			pos += (index > 0xFFFF)? 2 : 1	
+		}
+	}
+	return ret
+}
+RegExEscape(str)
+{
+	return regexreplace(str,"[\\\$\(\)\*\+\-\.\:\<\=\>\?\[\]\^\{\|\}]", "\$0")
+}
+TrimL32(str, OmitChars := "`s`t`r`n")
+{
+	return IsEmpty(OmitChars)? str : regexreplace(str, "A)[" . RegExEscape(OmitChars) . "]+")
+}
+TrimR32(str, OmitChars := "`s`t`r`n")
+{
+	return IsEmpty(OmitChars)? str : regexreplace(str, "D)[" . RegExEscape(OmitChars) . "]+$")
+}
+Trim32(str, OmitChars := "`s`t`r`n")
+{
+	return TrimL32(TrimR32(str, OmitChars), OmitChars)
+}
+IsEmpty(var)
+{
+	if isSet(var)
+	{
+		if HasMethod(var,"__Enum")
+		{
+			count := 0
+			for str in var
+			{
+				if strlen(str)
+					count++
+			}
+			return !count
+		}
+		return var == ""
+	}
+	return true
+}
+
+IsChar(str)
+{
+	return (StrLen32(str) == 1)
+}
+StrLen32(str)
+{
+	local ret
+	RegExReplace(str, "s).",, &ret)
+	return ret
+}
+SubStr32(str, pos, len := unset)
+{
+	arr := StrSplit32(str)
+	limit := arr.Length
+	ret := ""
+	if (pos < 0)
+	{
+		if (abs(pos) < limit)
+			pos += (limit+1)
+		else
+			pos := 1
+	}
+	else if (pos == 0 || pos > limit)
+		return ret
+	
+	if isSet(len)
+	{
+		if (len < 0)
+		{
+			if (abs(len) < limit)
+				limit += len
+			else
+				return ret
+		}	
+		else if (len == 0)
+			return ret
+		else
+			limit := Min(limit,pos+(len-1))
+	}
+	
+	while (pos <= limit)
+		ret .= arr[pos++]
+	
+	return ret
+}
+StrReverse(str)
+{
+	arr := StrSplit32(str)
+	ret := ""
+	for value in arr
+		ret := value . ret
+	return ret
+}
+OctToDec(num)
+{
+	ret := 0, len := StrLen(num)
+	loop Parse, num
+		ret += (Number(a_loopfield) * (8**(len - a_index)))
+	return ret
+}
+BinToDec(num)
+{
+	ret := 0, len := StrLen(num)
+	Loop Parse, num
+		ret += (Number(A_LoopField) * (1 << (len - A_Index)))
+	return ret
+}
+BaseToDec(num,digits)
+{
+	base := StrLen(digits), ret := 0
+	Loop Parse, num
+		ret := ((ret * base) + (InStr(digits, A_LoopField) - 1))
+	return ret
+}
+DecToBase(num,digits)
+{
+	base := StrLen(digits), ret := ""
+	While num
+	{
+		ret := SubStr(digits,Mod(num,base)+1,1) . ret
+		num //= base
+	}
+	Return ret
+}
+IsComposing()
+{
+	return (Composing.state? true : false)
+}
+
+StepUp(&num, increment := 1, ceiling := unset)
+{
+	if IsSet(ceiling)
+		num := Min(num+increment, ceiling)
+	else
+		num+=increment
+	return num
+}
+StepDown(&num, increment := 1, floor := unset)
+{
+	if IsSet(floor)
+		num := Max(num-increment, floor)
+	else
+		num -= increment
+	return num
+}
+
+RegExReplaceF(Haystack, NeedleRegEx, Function, &OutputVarCount := unset, Limit := -1, StartingPosition := 1) {
+
+	ret := ""
+
+	OutputVarCount := 0
+	
+	local match
+	
+	while ( RegExMatch(Haystack, NeedleRegEx, &match, StartingPosition) ) 
+	{
+		ret .= SubStr(Haystack, StartingPosition, match.pos-StartingPosition) . Function(match[])
+		StartingPosition := match.pos + match.Len
+		if (++OutputVarCount = Limit)
+			break
+	}
+
+	return ret . SubStr(Haystack, StartingPosition)
+}
+
+RegexSplit(haystack, needle) {
+	ret := Array()
+	prevPos := 1, prevLen := 0
+	match := ""
+	while RegExMatch(haystack, needle, &match, match? match.Pos + match.Len : 1)
+	{
+		ret.Push( SubStr(haystack, prevPos + prevLen, match.Pos - prevPos - prevLen) )
+		prevPos := match.Pos
+		prevLen := match.Len
+	}
+	ret.Push( SubStr(haystack, prevPos + prevLen) )
+	Return ret
+}
