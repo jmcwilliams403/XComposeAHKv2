@@ -1,4 +1,4 @@
-﻿#Requires AutoHotkey v2.0-b
+#Requires AutoHotkey v2.0-b
 #SingleInstance force
 SetWinDelay 0
 SetKeyDelay -1
@@ -19,7 +19,7 @@ global r_right := "^.*?:\s*(`"(\\.|[^\\`"])*`"|(\w+)).*$"
 global r_left := "^\s*((<{1,2}.*?>{1,2}\s*)*):.*$"
 global r_unicode := "iAD)U0{0,2}((?:10|0?[[:xdigit:]])?[[:xdigit:]]{1,4})$"
 
-global r_space := "[\p{Xps}]"
+global r_space := "[\p{Z}\h\v]"
 global r_sentinel := "[\x{FDD0}-\x{FDEF}]"
 
 global sequences := Map(), sequences_alt := Map()
@@ -44,13 +44,19 @@ global keysyms := Map(	"NoSymbol",		""
 					,	"Next",			Chr(0xFDD3)
 					,	"Page_Down",	Chr(0xFDD3)
 					,	"Left",			Chr(0xFDD4)
-					,	"Clear",		Chr(0xFDD5)
-					,	"Begin",		Chr(0xFDD5)
+					,	"Clear",		Chr(0x0c)
+					,	"Begin",		Chr(0x0c)
 					,	"Right",		Chr(0xFDD6)
 					,	"Home",			Chr(0xFDD7)
 					,	"Up",			Chr(0xFDD8)
 					,	"Prior",		Chr(0xFDD9)
-					,	"Page_Up",		Chr(0xFDD9))
+					,	"Page_Up",		Chr(0xFDD9)
+					,	"ch",			"ch"
+					,	"Ch",			"Ch"
+					,	"CH",			"CH"
+					,	"c_h",			"c’h"
+					,	"C_h",			"C’h"
+					,	"C_H",			"C’H")
 
 
 
@@ -65,7 +71,8 @@ LoadAll()
 *AppsKey::Return
 *AppsKey up::
 {
-	Hook := InputHook("","{Escape}{Enter}{NumpadEnter}{Tab}{F1}{F2}{F3}{F4}{F5}{F6}{F7}{F8}{F9}{F10}{F11}{F12}{PrintScreen}{Pause}")
+	Hook := InputHook("B","{Escape}{F1}{F2}{F3}{F4}{F5}{F6}{F7}{F8}{F9}{F10}{F11}{F12}{PrintScreen}{Pause}")
+	Hook.KeyOpt("{Enter}{Backspace}{Tab}","IN")
 	Hook.VisibleNonText := false
 	Hook.NotifyNonText := true
 	Hook.OnChar := SendCharacter
@@ -88,8 +95,14 @@ SendKeystroke(Hook, vk, sc)
 {
 	switch(vk)
 	{
+		case 0x08:
+			Send "{U+0008}"
+		case 0x09:
+			Send "{U+0009}"
 		case 0x0C:
-			SendText keysyms.get("Clear")
+			Send "{U+000C}"
+		case 0x0D:
+			Send "{U+000D}"
 		case 0x21:
 			SendText keysyms.get("Page_Up")
 		case 0x22:
@@ -108,6 +121,14 @@ SendKeystroke(Hook, vk, sc)
 			SendText keysyms.get("Down")
 		case 0x2D:
 			SendText keysyms.get("Insert")
+		case 0x2E:
+			Send "{U+007F}"
+		case 0xDB:
+			Send "{U+001b}"
+		case 0xDC:
+			Send "{U+001c}"
+		case 0xDD:
+			Send "{U+001d}"
 	}
 }
 SendUnicodeString(Hook)
@@ -117,18 +138,16 @@ SendUnicodeString(Hook)
 	
 	if (Hook.EndKey ~= "^((Numpad)?Enter|Tab)?$")
 	{
-		str := get_sequence(Hook.Input)
+		output := StrSplit32(get_sequence(Hook.Input))
 		
-		if (WinActive("ahk_class gdkWindowToplevel"))
+		GTK := (WinActive("ahk_class gdkWindowToplevel") && !Composing.state)? true : false
+		prefix := (GTK? "^+{vk55}" : "{U+"), suffix := (GTK? "{Enter}" : "}")
+		
+		for char in output
 		{
-			Loop Parse str
-			{
-				if (!IsEmpty(A_LoopField))
-					Send "^+{vk55}" . Format("{:x}",Ord(A_LoopField)) . "{Enter}"
-			}
+			if (!IsEmpty(char))
+				Send prefix . Format("{:x}",Ord(char)) . suffix
 		}
-		else
-			SendText str
 	}
 	
 	return
@@ -255,7 +274,7 @@ LoadSequenceFile(file)
 				continue
 			
 			valid := true
-			seq := ""
+			seq := Array()
 			
 			arr := RegexSplit(left,"(^|>)" . r_space . "*(<|$)")
 			
@@ -266,9 +285,9 @@ LoadSequenceFile(file)
 				errorlevel := ""
 				char := GetUnicode(str, &errorlevel)
 				if (keysyms.has(char))
-					seq .= keysyms[char]
+					seq.push(keysyms[char])
 				else if (IsChar(char) && !errorlevel)
-					seq .= char
+					seq.push(char)
 				else
 				{
 					valid := false
@@ -276,22 +295,25 @@ LoadSequenceFile(file)
 				}
 			}
 			
-			if (valid)
+			if (valid && !IsEmpty(seq))
 			{
+				str := Stringify(seq)
 				if (!IsEmpty(right))
 				{
-					add_sequence(seq, right)
+					add_sequence(str, right)
 					
-					if (StrLen32(seq) == 2)
+					if (seq.Length == 2)
 					{
-						str := StrReverse(seq)
+						str := ""
+						loop 2
+							str := seq[a_index] . str
 						if (!sequences.has(str))
 							add_sequence(str, right)
 					}
 				}
-				else if (sequences.has(seq))
+				else if (sequences.has(str))
 				{
-					del_sequence(seq)
+					del_sequence(str)
 				}
 			}
 		}
@@ -347,7 +369,7 @@ get_sequence(seq)
 	if (IsEmpty(seq))
 		return ""
 	
-	str := substr32(seq,1,-1), char := SanitizeOutput(RegexReplace(substr32(seq,-1),r_space))
+	str := substr32(seq,1,-1), char := StrReplace(SanitizeOutput(substr32(seq,-1)), a_space)
 	
 	if(sequences.has(seq))
 		ret := sequences[seq]
@@ -358,12 +380,11 @@ get_sequence(seq)
 	else if (sequences_alt.has(str))
 		ret := sequences_alt[str] . char
 	else
-		return SanitizeOutput(RegexReplace(str . char, "^(\p{M}+)((\P{M}))","$2$1"))
+		return SanitizeOutput(RegexReplace(str, "^(\p{M}+)((\P{M}))","$2$1")) . char
 	if (GetCapsLockState() && !(seq ~= "[\p{Ll}]"))
 		ret := StrUpper(ret)
 	return ret
 }
-
 GetCapsLockState(Mode := "T")
 {
 	return GetKeyState("CapsLock", Mode)
@@ -377,8 +398,8 @@ GetUnicode(str, &errorlevel := unset)
 		return str
 	}
 	ret := ""
-	uni := regexreplace(str, r_unicode, "$1", &ret)
-	return ZapNonchar(((ret && !IsEmpty(uni))? Chr(Number("0x" . uni)) : str), &errorlevel)
+	uni := regexreplace(str, r_unicode, "0x$1", &ret)
+	return ZapNonchar((ret? Chr(Number(uni? uni : 0x80)) : str), &errorlevel)
 }
 
 Unescape(str, &errorlevel := unset)
@@ -407,17 +428,17 @@ Unescape(str, &errorlevel := unset)
 	str := RegExReplace(str, r_escapePrefix . "\\r", "`r")
 	str := RegExReplace(str, r_escapePrefix . "\\e", Chr(0x1b))
 	
-	str := ZapNonchar(regexreplaceF(str, r_escapePrefix . "\\0x[[:xdigit:]]{4}", var => Chr(Number(LTrim(var, "\")))),&errorlevel)
+	str := ZapNonchar(regexreplaceF(str, r_escapePrefix . "\\0x[[:xdigit:]]{4}", var => Chr((index := Number(LTrim(var, "\")))? index : 0x80)),&errorlevel)
 	
 	if (errorlevel)
 		return str
 	
-	str := ZapNonchar(regexreplaceF(str, r_escapePrefix . "\\[0-7]{3}", var => Chr(OctToDec(Number(LTrim(var, "\"))))),&errorlevel)
+	str := ZapNonchar(regexreplaceF(str, r_escapePrefix . "\\[0-7]{3}", var => Chr((index := OctToDec(Number(LTrim(var, "\"))))? index : 0x80)),&errorlevel)
 	
 	if (errorlevel)
 		return str
 	
-	str := RegExReplace(str, r_escapePrefix . "\\0")
+	str := RegExReplace(str, r_escapePrefix . "\\0", Chr(0x80))
 	str := regexreplace(str, "\\(.)", "$1")
 	
 	return str
@@ -432,16 +453,16 @@ SanitizeOutput(str)
 	
 	str := regexreplace(str, r_sentinel)
 	
-	str := RegexReplace(str,r_space, a_space)
+	str := RegexReplace(str, "[\x00\x0c\x1b\x7f\x80]")
 	
-	str := RegexReplace(str, "[\x00\x1b\x7f\x80]")
+	str := RegexReplace(str,r_space, a_space)
 	
 	str := RegexReplace(str,"`a",,&ret)
 	loop ret
 		SoundPlay "*-1"
 	
 	loop
-		str := regexreplace(str,"(^|[^`b]\p{M}*)`b",,&ret)
+		str := regexreplace(str,"(^|[^\b][\p{M}]*)[\b]",,&ret)
 	Until !ret
 	
 	return str
@@ -529,7 +550,27 @@ IsEmpty(var)
 	}
 	return true
 }
-
+Stringify(arr, delimiter := "")
+{
+	if !HasProp(arr, "__Item")
+		return arr
+	ret := "", len := arr.Length
+	loop len - 1
+		ret .= (arr[a_index] . delimiter)
+	return (ret . arr[len])
+}
+StringToHex(str)
+{
+	arr := StrSplit32(str)
+	ret := ""
+	for char in arr
+		ret .= Format("{:06X}", Ord(char))
+	return ret
+}
+HexToString(str)
+{
+	return regexreplaceF(str,"s)[[:xdigit:]]{6}", var => Chr("0x" . var))
+}
 IsChar(str)
 {
 	return (StrLen32(str) == 1)
@@ -573,14 +614,6 @@ SubStr32(str, pos, len := unset)
 	while (pos <= limit)
 		ret .= arr[pos++]
 	
-	return ret
-}
-StrReverse(str)
-{
-	arr := StrSplit32(str)
-	ret := ""
-	for value in arr
-		ret := value . ret
 	return ret
 }
 OctToDec(num)
