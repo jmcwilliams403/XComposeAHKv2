@@ -31,32 +31,32 @@ sequences_alt.CaseSense := "Off", HasGenericPrefix.CaseSense := "Off", HasGeneri
 
 global keysyms := Map(	"NoSymbol",		""
 					,	"VoidSymbol",	""
-					,	"Blank",		Chr(0x80)
 					,	"BackSpace",	Chr(0x08)
 					,	"Tab",			Chr(0x09)
 					,	"Linefeed",		Chr(0x0a)
-					,	"Return",		Chr(0x0d)
-					,	"Escape",		Chr(0x1b)
-					,	"Delete",		Chr(0x7f)
-					,	"Insert",		Chr(0xFDD0)
-					,	"End",			Chr(0xFDD1)
-					,	"Down",			Chr(0xFDD2)
-					,	"Next",			Chr(0xFDD3)
-					,	"Page_Down",	Chr(0xFDD3)
-					,	"Left",			Chr(0xFDD4)
 					,	"Clear",		Chr(0x0c)
 					,	"Begin",		Chr(0x0c)
-					,	"Right",		Chr(0xFDD6)
-					,	"Home",			Chr(0xFDD7)
-					,	"Up",			Chr(0xFDD8)
-					,	"Prior",		Chr(0xFDD9)
-					,	"Page_Up",		Chr(0xFDD9)
-					,	"ch",			"ch"
-					,	"Ch",			"Ch"
-					,	"CH",			"CH"
-					,	"c_h",			"c’h"
-					,	"C_h",			"C’h"
-					,	"C_H",			"C’H")
+					,	"Return",		Chr(0x0d)
+					,	"Escape",		Chr(0x1b)
+					
+					,	"Blank",		Chr(0xFDD0)
+					,	"Prior",		Chr(0xFDD1)
+					,	"Page_Up",		Chr(0xFDD1)
+					,	"Next",			Chr(0xFDD2)
+					,	"Page_Down",	Chr(0xFDD2)
+					,	"End",			Chr(0xFDD3)
+					,	"Home",			Chr(0xFDD4)
+					,	"Left",			Chr(0xFDD5)
+					,	"Up",			Chr(0xFDD6)
+					,	"Right",		Chr(0xFDD7)
+					,	"Down",			Chr(0xFDD8)
+					,	"Select",		Chr(0xFDD9)
+					,	"Print",		Chr(0xFDDA)
+					,	"Execute",		Chr(0xFDDB)
+					,	"Sys_Req",		Chr(0xFDDC)
+					,	"Insert",		Chr(0xFDDD)
+					,	"Delete",		Chr(0xFDDE)
+					,	"Help",			Chr(0xFDDF) )
 
 
 
@@ -103,26 +103,8 @@ SendKeystroke(Hook, vk, sc)
 			Send "{U+000C}"
 		case 0x0D:
 			Send "{U+000D}"
-		case 0x21:
-			SendText keysyms.get("Page_Up")
-		case 0x22:
-			SendText keysyms.get("Page_Down")
-		case 0x23:
-			SendText keysyms.get("End")
-		case 0x24:
-			SendText keysyms.get("Home")
-		case 0x25:
-			SendText keysyms.get("Left")
-		case 0x26:
-			SendText keysyms.get("Up")
-		case 0x27:
-			SendText keysyms.get("Right")
-		case 0x28:
-			SendText keysyms.get("Down")
-		case 0x2D:
-			SendText keysyms.get("Insert")
-		case 0x2E:
-			Send "{U+007F}"
+		case 0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x2A,0x2B,0x2C,0x2D,0x2E,0x2F:
+			SendText Chr(vk + 0xFDB0)
 		case 0xDB:
 			Send "{U+001b}"
 		case 0xDC:
