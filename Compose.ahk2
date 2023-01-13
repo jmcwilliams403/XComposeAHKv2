@@ -1,4 +1,4 @@
-#Requires AutoHotkey v2.0-b
+#Requires AutoHotkey v2.0
 #SingleInstance force
 SetWinDelay 0
 SetKeyDelay -1
