@@ -6,7 +6,7 @@ SetWorkingDir A_ScriptDir
 SequenceDir := A_AppData . "\XCompose"
 SequenceFile := SequenceDir . "\XCompose"
 KeysymFile := SequenceDir . "\XKeySymDef"
-SequenceRepo := "https://raw.githubusercontent.com/freedesktop/xorg-libX11/master/nls/en_US.UTF-8/Compose.pre"
+SequenceRepo := "https://raw.githubusercontent.com/mirror/libX11/master/nls/en_US.UTF-8/Compose.pre"
 KeysymRepo := "https://raw.githubusercontent.com/freedesktop/xorg-xorgproto/master/include/X11/keysymdef.h"
 UserDir := EnvGet("USERPROFILE")
 UserSequenceFile := UserDir . "\.XCompose"
